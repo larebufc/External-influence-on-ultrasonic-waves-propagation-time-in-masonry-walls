@@ -6,6 +6,15 @@
 
 
 
+
+https://rpubs.com/rfpaz/Gaussian_process
+
+
+
+
+
+
+
 ```{r message=FALSE, warning=FALSE}
 if(!require(rstan)) install.packages("rstan");require(rstan)
 
