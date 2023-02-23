@@ -15,17 +15,23 @@ if(!require(coda)) install.packages("coda");require(coda)
 
 if(!require(ggplot2)) install.packages("ggplot2");require(ggplot2) 
 
+if(!require(RCurl)) install.packages("RCurl");require(RCurl) 
+
+
 ```
 
 
 ## Data 
 ### For each frame and wall, 10 ultrassonic waves were emitted and received in a total of 240 waves. Each wave contains six points of measurements.
 
+
 ```{r}
-## download from github
-caminho = "U:/Drives compartilhados/Artigo Mixto e PG/Resultados/"
-dados<-read.table(paste(caminho,"dados_com_e_sem_vazios.csv",sep=""),h=T,sep=",")
+##dataset from github respository
+ur <- getURL("https://raw.githubusercontent.com/larebufc/External-influence-on-ultrasonic-waves-propagation-time-in-masonry-walls/main/dados_com_e_sem_vazios.csv")
+dados <- read.csv(text = ur,h=T,sep=",")
+
 ```
+
 
 ### Selecting $m=231$ observed curves. Nine waves were not captured by the receiver in any distance and they are not in the dataset. One sequence appears with only 4 measurements instead of 6 and it is also omitted.
 
