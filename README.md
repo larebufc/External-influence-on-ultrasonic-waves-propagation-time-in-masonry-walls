@@ -6,7 +6,7 @@
 
 
 
-[Link for the code and results:]( https://rpubs.com/rfpaz/Gaussian_process)
+[Link for the code and results from Gaussian process modeling]( https://rpubs.com/rfpaz/Gaussian_process)
 
 
 
