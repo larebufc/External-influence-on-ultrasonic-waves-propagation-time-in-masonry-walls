@@ -10,5 +10,11 @@
 
 
 
+## Modeling the ultrassonic data with Mixed Model
+
+
+
+### [Link for the code and results from Mixed Model modeling](https://rpubs.com/rfpaz/MixedModel)
+
 
 
