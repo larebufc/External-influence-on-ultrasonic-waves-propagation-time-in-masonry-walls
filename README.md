@@ -238,13 +238,6 @@ Seed = 1000
 
 
 
-```{r include=FALSE}
-Chain= 1
-Iter = 10
-Warmup = 5
-Thin = 1
-Seed = 10000
-```
 
 
 ##### Fitting the model with Stan
@@ -282,10 +275,6 @@ draw1 <- stan(model_code =stanmodelcode,
 
 ```
 
-
-```{r include=FALSE}
-load("U:/Drives compartilhados/Artigo Mixto e PG/Resultados/GP.RData")
-```
 
 ####  Convergence checking
 
@@ -376,13 +365,6 @@ ICQM
 #### Model fit without the non relevant coefficient X7 (cubic distance)
 
 
-```{r include=FALSE}
-Chain= 1
-Iter = 10
-Warmup = 5
-Thin = 1
-Seed = 10000
-```
 
 ```{r}
 ### excluding some  predictor variables
@@ -412,11 +394,6 @@ draw2 <- stan(model_code =stanmodelcode,
              data = dat_list, iter=Iter, chains = Chain, thin = Thin, warmup = Warmup)
 
 
-```
-
-
-```{r include=FALSE}
-load("U:/Drives compartilhados/Artigo Mixto e PG/Resultados/GP.RData")
 ```
 
 
