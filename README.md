@@ -1,1 +1,1 @@
-# External-influence-on-ultrasonic-waves-propagation-time-in-masonry-walls
+# External influence on ultrasonic waves propagation time in masonry walls
