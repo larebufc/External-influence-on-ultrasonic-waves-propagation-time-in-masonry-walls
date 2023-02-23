@@ -1,0 +1,588 @@
+---
+title: "Mixed model for modeling ultrassônicas wave"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Modeling the data with Mixed Model
+
+
+```{r message=FALSE, warning=FALSE}
+if(!require(rstan)) install.packages("rstan");require(rstan)
+
+if(!require(coda)) install.packages("coda");require(coda) 
+
+if(!require(ggplot2)) install.packages("ggplot2");require(ggplot2) 
+
+```
+
+
+## Data 
+### For each frame and wall, 10 ultrassonic waves were emitted and received in a total of 240 waves. Each wave contains six points of measurements.
+
+```{r}
+## download from github
+caminho = "U:/Drives compartilhados/Artigo Mixto e PG/Resultados/"
+dados<-read.table(paste(caminho,"dados_com_e_sem_vazios.csv",sep=""),h=T,sep=",")
+```
+
+### Selecting $m=231$ observed curves. Nine waves were not captured by the receiver in any distance and they are not in the dataset. One sequence appears with only 4 measurements instead of 6 and it is also omitted.
+
+```{r}
+tira<-which(dados[,4]==0 & dados[,5]==0)
+dados<-dados[-tira,]
+tira_2 <- which(dados[,2]=="223") #this wave does not contain six points and is left out
+dados<-dados[-tira_2,]
+indiv<-as.numeric(dados[,2])
+#
+#
+m=length(table(indiv))    #total of individuals
+repl=table(indiv) # total of observations for each individual 
+n=length(indiv)   # total of measurements
+
+```
+
+## Factors (inputs) for the model
+
+### Covariates for fixed effects
+
+```{r}
+X<-as.matrix(dados[,c(5,1,6)])
+X<-cbind(rep(1,n),X)
+X<-as.matrix(X)
+#
+parede<-dados[,1]
+quadrante<-dados[,3]
+######################
+##dummies construction
+######################
+####################
+tijolo_sb<-which(quadrante %in% c(2,3) & parede==2 | (quadrante %in% c(5,6,7,8,10) & parede==1))
+tijolo_cb<-which(quadrante %in% c(1,5,6,10) & parede==2)
+argamassa<-which((quadrante %in% c(1,2,3,11) & parede==1) | (quadrante %in% c(7,8) & parede==2))
+interface<-which(quadrante %in% c(4,9,12) | (quadrante %in% c(11) & parede==2))
+####################
+####################
+##condition of the walls at each propagation time measurement location.
+categoria<-NULL
+categoria[argamassa]<-"Argamassa"  ### measurement made on grout as reference 
+categoria[interface]<-"Interface"  ### dummy indicating if the measurement is made on the brick–grout interface or not
+categoria[tijolo_cb]<-"Tij_com_buraco" ### dummy indicating if the measurement is made on the brick with void or not
+categoria[tijolo_sb]<-"Tij_sem_buraco" ### dummy indicating if the measurement is made on the brick without void or not
+#####################
+#####################
+elem<-model.matrix(dados$Valor ~ factor(categoria))[,-1]
+elem<-matrix(as.numeric(elem),ncol=3)
+####################
+DummiesCategory = categoria
+####################
+```
+
+
+```{r}
+print(table(DummiesCategory))
+```
+
+
+### Covariates for random-effects
+
+
+```{r}
+####################
+Vt<-c(10,15,20,25,30,35) ## six distances
+aux<-matrix(round(poly(Vt, degree=3),3),ncol=3) ## orthogonal polynomials for each individual
+#
+aux<-cbind(1,aux)
+Z<-NULL
+for (i in 1:m) Z<-rbind(Z,aux[1:repl[i],])
+#
+Xfinal<-cbind(X,elem,Z[,-1])
+#
+Y<-as.matrix(dados[,4],ncol=1) ## column vector for response variable
+####################
+## removing measurements at 35cm for fitting the model and using then for validating it
+####################
+tira<-which(Xfinal[,2]==35)
+Xmod<-Xfinal[-tira,-2]
+Ymod<-matrix(Y[-tira,],ncol=1)
+Zmod<-Z[-tira,]
+Data<-dados[-tira,]
+#
+Xvalid<-Xfinal[tira,-2]
+Yvalid<-matrix(Y[tira,],ncol=1)
+Zvalid<-Z[tira,]
+Datavalid<-dados[tira,]
+#
+Amostramod<-NULL
+for (i in 1:length(table(indiv))){
+	Amostramod<-c(Amostramod,rep(i,repl[i]-1))}
+Amostravalid<-1:230
+####################
+
+```
+
+
+### Fitting the Model
+
+
+#### Stan code for estimating the Mixed Effect Model
+
+```{r}
+stanmodelcode=" data {
+  int<lower=0> m; // total of individuals
+  int<lower=0> N; // total of observations
+  int<lower=0> t; // total of parameters for fixed-effect 
+  int<lower=0> q; // total of parameters for random-effect 
+  int<lower=1, upper=m> amostra[N]; //index for individuals in the fitting dataset
+  vector[q] u; // mean vector for random-effect
+  matrix[N,t] x; // model matrix for fixed-effect
+  matrix[m,t] xvalid; // model matrix for fixed-effect
+  matrix[N,q] z; // model matrix for random-effect
+  matrix[m,q] zvalid; // model matrix for random-effect
+  matrix[q,q] W; // covariance matrix Inverse−Wishart
+  matrix[N,1] y; // vector of response variable
+  vector[m] yvalid;
+  int<lower=1, upper=m> amostravalid[m]; //index for individuals in the test dataset
+}
+
+parameters {
+  real<lower=0> sigma; // variance for random-errors
+  vector[t] beta; // coefficients vector for fixed-effect
+  matrix[q,m] b; // parameters matrix for random-effect
+  cov_matrix[q] G; // covariance matrix for Inverse−Wishart
+}
+
+model {
+  real media; //mean vector of response variable
+  beta ~ normal(0,1000); // prior for coefficients of fixed-effect
+  1/sigma ~ gamma(0.1,0.1); //prior for the variance of random-errors
+  G ~ inv_wishart(5,W); // prior for var-con matrix of random-effects
+  for(i in 1:m){
+    b[,i] ~ multi_normal(u,G); //distribution of random-effects
+  }
+  for(j in 1:N){
+    media = x[j,]*beta+z[j,]*b[,amostra[j]]; //mean of each observation
+    y[j] ~ normal(media, sqrt(sigma)); //likelihood function
+  }
+}
+ 
+generated quantities{
+ real med;
+  vector[m] yest;
+    real Log;
+   Log = 0;
+    for(l in 1:N){
+    med = x[l,]*beta+z[l,]*b[,amostra[l]]; //mean
+    Log =+ normal_lpdf(y[l]|med, sqrt(sigma)); //log likelihood
+    }
+    for(l in 1:m){
+    yest[l] = xvalid[l,]*beta+zvalid[l,]*b[,amostravalid[l]]; 
+    }  
+}
+"
+```
+
+#### Run Stan code for estimating the parameters of Mixed Effect Model
+
+##### Configuration for the arguments of Stan code
+
+```{r}
+Chain= 1
+Iter = 20000
+Warmup = 5000
+Thin = 10
+Seed = 1000
+```
+
+
+
+
+##### Fitting the model with Stan
+
+```{r echo=TRUE, message=FALSE, warning=FALSE,results="hide"}
+
+### Configuration for running stan code
+
+m = m
+N = length(Ymod)
+q = ncol(Zmod)
+amostra = Amostramod
+u = rep(0,q)
+x = Xmod[,-2]
+t = ncol(x)
+z = Zmod
+diagonal_W = rep(100,q)
+W = diag(diagonal_W)
+y = Ymod
+v = rep(0,N)
+
+### running the code
+dta = list(m=m, N=N, t=t, q=q, amostra=amostra, u=u, x=x, xvalid=Xvalid[,-2], z=z, zvalid=Zvalid, W=W, y=y, yvalid=as.vector(Yvalid), amostravalid=Amostravalid)
+
+
+fit1 <- stan(model_code =stanmodelcode,
+            data = dta,
+            chains = Chain, iter = Iter, warmup = Warmup, thin = Thin, seed=Seed)
+
+```
+
+
+####  Checking convergence of the chain
+
+```{r eval=FALSE, include=FALSE}
+
+samp<-extract(fit1, permuted = FALSE, inc_warmup = FALSE, include = TRUE)
+
+
+
+head(samp)
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+### Checking convergence by Geweke for coefficients of fixed-effect and  variance of random-errors (sigma)
+
+cadeia<-data.frame(extract(fit1, pars = "beta")[[1]])
+cadeia["sigma"]<-data.frame(extract(fit1, pars = "sigma")[[1]])
+
+
+pvalue <- apply(cadeia, 2, function(x){pnorm(abs(geweke.diag(mcmc(x))$z),lower.tail=FALSE)*2})
+P = length(pvalue)-1
+
+Parameter = c("beta0","beta1","beta2","beta3","beta4","beta5","beta6","beta7","beta8","sigma")
+
+
+head(cadeia)
+
+
+```
+
+##### Checking the convergence of the MCMC chain using the log-likelihood
+
+
+```{r}
+
+cadeia<-as.numeric(extract(fit1, pars = "Log")$Log)
+gewek<-geweke.diag(mcmc(cadeia))
+TestConvergency = numeric()
+TestConvergency["Zscore"] = gewek[1]
+TestConvergency["Pvalue"] = data.frame(pnorm(as.numeric(abs(gewek$z[1])),lower.tail=FALSE)*2)
+
+TestConvergency
+
+
+
+```
+
+
+
+```{r}
+plot(mcmc(exp(cadeia)),type='l')
+
+```
+
+
+#### Estimation
+
+##### Regression coefficients estimates (point and interval estimates – 90% credibility interval)
+
+
+```{r}
+cadeia<-data.frame(extract(fit1, pars = "beta")[[1]])
+
+names(cadeia) = c("X0",names(cadeia)[-ncol(cadeia)])
+
+cadeia["sigma"]<-data.frame(extract(fit1, pars = "sigma")[[1]])
+
+###########################
+## HPD
+##########################
+
+pvalue <- apply(cadeia, 2, function(x){HPDinterval(mcmc(x),0.90)})
+P = length(pvalue[1,])
+
+t(pvalue)
+
+###########################
+## Quantil
+##########################
+
+ICQM <- data.frame(Mean=apply(cadeia, 2, function(x){mean(x)}))
+ICQM[c("5%","50%","95%")] <- t(apply(cadeia, 2, function(x){quantile(x,c(0.05,0.5,0.95))}))
+
+ICQM
+
+```
+
+
+### Final Analysis
+
+
+#### Model fitted without the non relevant coefficient X7 (cubic distance)
+
+
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE,results="hide"}
+
+### Configuration for running stan code
+
+m = m
+N = length(Ymod)
+q = ncol(Zmod)
+amostra = Amostramod
+u = rep(0,q)
+x = Xmod[,-c(2,ncol(Xmod))]
+xv= Xvalid[,-c(2,ncol(Xmod))]
+t = ncol(x)
+z = Zmod
+diagonal_W = rep(100,q)
+W = diag(diagonal_W)
+y = Ymod
+v = rep(0,N)
+
+### running the code
+dta = list(m=m, N=N, t=t, q=q, amostra=amostra, u=u, x=x, xvalid=xv, z=z, zvalid=Zvalid, W=W, y=y, yvalid=as.vector(Yvalid), amostravalid=Amostravalid)
+
+
+fit2 <- stan(model_code =stanmodelcode,
+            data = dta,
+            chains = Chain, iter = Iter, warmup = Warmup, thin = Thin, seed=Seed)
+
+
+
+```
+
+
+
+#### Regression coefficients estimates (point and interval estimates – 90% credibility inter-val)
+
+
+
+```{r}
+cadeia<-data.frame(extract(fit2, pars = "beta")[[1]])
+names(cadeia) = c("X0",names(cadeia)[-ncol(cadeia)])
+cadeia["sigma"]<-data.frame(extract(fit2, pars = "sigma")[[1]])
+
+
+###########################
+## HPD
+##########################
+hpd <- apply(cadeia, 2, function(x){HPDinterval(mcmc(x),0.90)})
+
+
+###########################
+## Quantil
+##########################
+CI <- data.frame(Mean=apply(cadeia, 2, function(x){mean(x)}))
+CI[c("5%","50%","95%")] <- t(apply(cadeia, 2, function(x){quantile(x,c(0.05,0.5,0.95))}))
+
+CI
+
+```
+
+##### Barplot with the estimate for some fixed-effects
+
+```{r}
+
+coeffs = c(3,4,5)
+R=data.frame(Coefficients = rownames(CI)[coeffs],Value=CI[coeffs,1])
+
+
+ggplot(R, aes(x = Coefficients)) +
+  geom_col(aes(y = Value,), fill = "gray") +
+  theme_minimal()  +  xlab('Coefficients in Mixed Model') +
+theme( plot.title=element_text(size=16),
+         axis.text=element_text(size=18),
+         axis.title=element_text(size=20))
+
+```
+
+Obs: all covariates seem to reduce the wave speed, considering that they contribute to its propagation in a longer time. Specifically, the covariate X3 (brick with voids) acts more strongly, reducing the wave speed more strongly.
+
+#### Prediction in the wall without voids (Panel 1), and with voids (Panel 2)
+
+
+```{r}
+
+
+cadeia=data.frame(extract(fit2, pars = "yest")[[1]])
+
+dif =  numeric()
+for (j in 1:m){
+dif = cbind(dif,cadeia[,j] - Yvalid[j])}
+
+dif=data.frame(dif)
+
+EQM1=data.frame(MSE=sqrt(colMeans((dif)^2)))
+
+EQM_P1 = EQM1[Xvalid[,2]==1,]
+EQM_P1 = data.frame(Index = 1:length(EQM_P1),Panel=as.factor(rep(0,length(EQM_P1))),MSE=EQM_P1)
+EQM_P2 = EQM1[Xvalid[,2]==2,]
+EQM_P2 = data.frame(Index = 1:length(EQM_P2),Panel=as.factor(rep(1,length(EQM_P2))),MSE=EQM_P2)
+
+EQM = rbind(EQM_P1,EQM_P2)
+
+EQMtotal = mean(EQM[,3])
+
+paste("EQM total:",round(EQMtotal,2))
+
+ 
+# Visualization
+ggplot(EQM, aes(x = Index, y = MSE)) + 
+  geom_line(aes(color = Panel, linetype = Panel)) + 
+ylab("RMSE (Mixed model)")+
+ xlab("Individual Index")+
+  scale_color_manual(values = c("gray", "black"))+ theme_minimal()+
+theme( plot.title=element_text(size=16),
+         axis.text=element_text(size=18),
+         axis.title=element_text(size=20))
+
+
+```
+
+##### Plot for predicted and real values
+
+
+```{r}
+
+
+B = t(colMeans(extract(fit2, pars = "b")$b ))
+Betas = matrix(CI[-8,1],ncol = 1)
+
+ypred = numeric()
+for(i in 1:m){
+ypred= rbind(ypred, matrix(x[which(amostra==i),],nrow = 5)%*%Betas +  matrix(z[which(amostra==i),],nrow = 5)%*%matrix(B[i,],ncol=1)) 
+}
+
+
+plt_df = data.frame(ind=amostra, x = Data$D_m, ypred, Y=c(t(y)), Panel = Data$parede_n  )
+
+
+p <- ggplot(data = plt_df, aes(x = x, y = Y, group = ind, colour = 'Observed data'))
+
+
+p + geom_line(aes(group=ind ),size=1)+
+  labs(x = "Time", y = " Response (s) ")+
+  geom_point(aes(colour = 'Observed data'), size=1) +  
+  geom_line(data = plt_df, aes(x = x, y = ypred, colour = 'Predicted value'), size=1, alpha=0.6) +
+  theme_bw() + theme(legend.position="bottom") +
+  #scale_color_manual(name = '', values = c('Observed data'='black')) +
+  xlab('Distance') +
+  ylab('Propagation time') 
+
+
+```
+
+##### Residual for Mixed Model
+
+```{r}
+
+
+Res = c(t(y))-ypred
+
+
+datares = data.frame(Index = 1:N,Res = Res)
+
+# Visualization
+ggplot(datares, aes(x = Index, y = Res)) + 
+  geom_point(aes(), size=1) + 
+  ylab("Residual (Mixed Model)")+
+  xlab("Index")+
+  scale_color_manual(values = c("darkblue", "red"))+ theme_minimal()+
+  theme( plot.title=element_text(size=16),
+         axis.text=element_text(size=18),
+         axis.title=element_text(size=12))
+
+
+```
+
+
+
+
+
+
+```{r}
+
+
+
+Panel_val = Xvalid[,2]
+
+Panel_val[Xvalid[,2]==0] = 0
+Panel_val[Xvalid[,2]==1] = 1
+
+yest = numeric()
+for (i in 1:m){
+  yest= rbind(yest, matrix(xv[which(Amostravalid==i),],nrow = 1)%*%Betas +  matrix(Zvalid[which(Amostravalid==i),],nrow = 1)%*%matrix(B[i,],ncol=1)) }
+
+Forecasting<- data.frame(ind =1:m ,x=rep(35,m),ypred = yest,Y=Yvalid, Panel = Panel_val)
+
+plt_df2 = rbind(plt_df,Forecasting) 
+
+or = order(plt_df2$ind)
+plt_df2 = plt_df2[or,]
+
+
+p <- ggplot(data = plt_df2, aes(x = x, y = Y, group = ind,colour = 'Observed data'))
+
+
+p + geom_line(aes(group=ind),size=1)+ ylim(0, 1600)+
+  geom_point(aes(colour = 'Observed data'), size=1) +  
+  geom_line(data = plt_df2, aes(x = x, y = ypred, colour = 'Predicted value'), size=1, alpha=0.6) +
+  theme_bw() +
+  #scale_color_manual(name = '', values = c('Observed data'='black')) +
+  xlab('Distance') +
+  ylab('Propagation time') +theme( plot.title=element_text(size=20),
+                                   axis.text=element_text(size=10),
+                                   axis.title=element_text(size=12),
+                                   legend.position="bottom")
+
+
+
+
+plt_df3=plt_df2
+plt_df3$Panel[plt_df2$Panel==0]= "Panel0"
+plt_df3$Panel[plt_df2$Panel==1]= "Panel1"
+
+```
+
+##### Plot for predicted and real values followed by the real and estimated value for distance 35 cm - Panel=1 and Panel =2
+
+
+
+```{r}
+
+
+plt_df3 = plt_df2[plt_df2$Panel==1,]
+
+p <- ggplot(data = plt_df3, aes(x = x, y = Y, group = ind,colour = 'Observed data'))
+
+
+p + geom_line(aes(group=ind ),size=1)+
+  labs(x = "Time", y = " Response (s) ")+
+  geom_point(aes(colour = 'Observed data'), size=1) +  
+  geom_line(data = plt_df3, aes(x = x, y = ypred, colour = 'Predicted value'), size=1, alpha=0.6) +
+  theme_bw() + theme(legend.position="bottom") +
+  #scale_color_manual(name = '', values = c('Realized data'='black')) +
+  xlab('Distance') +
+  ylab('Propagation time') 
+
+
+plt_df3 = plt_df2[plt_df2$Panel==2,]
+
+p <- ggplot(data = plt_df3, aes(x = x, y = Y, group = ind,colour = 'Observed data'))
+
+
+p + geom_line(aes(group=ind ),size=1)+
+  labs(x = "Time", y = " Response (s) ")+
+  geom_point(aes(colour = 'Observed data'), size=1) +  
+  geom_line(data = plt_df3, aes(x = x, y = ypred, colour = 'Predicted value'), size=1, alpha=0.6) +
+  theme_bw() + theme(legend.position="bottom") +
+  #scale_color_manual(name = '', values = c('Realized data'='black')) +
+  xlab('Distance') +
+  ylab('Propagation time') 
+
+```
+
