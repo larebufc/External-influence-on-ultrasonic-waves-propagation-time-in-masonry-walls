@@ -6,7 +6,7 @@
 
 
 
-### [Link for the code and results from Gaussian process modeling](https://rpubs.com/rfpaz/GaussianProcess)
+### [Link for the code and results from Gaussian process](https://rpubs.com/rfpaz/GaussianProcess)
 
 
 
@@ -14,7 +14,7 @@
 
 
 
-### [Link for the code and results from Mixed Model modeling](https://rpubs.com/rfpaz/MixedModel)
+### [Link for the code and results from Mixed Model](https://rpubs.com/rfpaz/MixedModel)
 
 
 
